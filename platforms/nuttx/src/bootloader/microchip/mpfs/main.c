@@ -52,8 +52,9 @@
 #include "lib/flash_cache.h"
 
 #include <nuttx/mtd/mtd.h>
-#include <nuttx/fs/partition.h>
-
+//#include <nuttx/fs/partition.h>
+#include <../fs/partition/partition.h>
+#include "fsutils/mkfatfs.h"
 #include "image_toc.h"
 
 #define MK_GPIO_INPUT(def) (((def) & (~(GPIO_OUTPUT)))  | GPIO_INPUT)
@@ -191,6 +192,68 @@ static int load_sdcard_images(const char *name, uint64_t loadaddr)
 	close(mmcsd_fd);
 	return -1;
 }
+
+#define GPT_SIZE 1536
+
+
+struct index_table_s {
+	unsigned idx;
+	uint32_t val;
+};
+
+static const struct index_table_s ptable_hack[] = {
+	{0x1b8, 0x3d25d8d0},
+	{0x1c0, 0x01830001},
+	{0x1c4, 0x0800ffc1},
+	{0x1c8, 0x58000000},
+	{0x1cc, 0x00000005},
+	{0x1e0, 0x01830001},
+	{0x1e4, 0x6000ffc1},
+	{0x1e8, 0x00000005},
+	{0x1ec, 0x00000397},
+	{0x1fc, 0xaa550000},
+	{0x200, 0x41615252},
+	{0x3e4, 0x61417272},
+	{0x3e8, 0x001cdf61},
+	{0x3ec, 0x00000003},
+	{0x3fc, 0xaa550000}
+};
+
+static void create_partitions(void)
+{
+
+	struct partition_state_s state;
+	int ret = open_blockdriver("/dev/mmcsd0", 0, &state.blk);
+
+	_alert("Creating partitions...\n");
+
+	if (ret < 0 || !state.blk || !state.blk->u.i_bops->write) {
+		_alert("Can't open device\n");
+		return;
+	}
+
+	/* Create GPT Ptable */
+
+	uint32_t *ptbl = zalloc(GPT_SIZE);
+
+	if (!ptbl) {
+		_alert("OOM\n");
+	}
+
+	// Write the entries
+	for (size_t i = 0; i < sizeof(ptable_hack) / sizeof(struct index_table_s); i++) {
+		ptbl[ptable_hack[i].idx / 4] = ptable_hack[i].val;
+	}
+
+	// Write the blocks to disk
+	state.blk->u.i_bops->write(state.blk,
+				   (void *)ptbl, 0, GPT_SIZE / 512);
+
+	free(ptbl);
+
+	close_blockdriver(state.blk);
+}
+
 #endif
 
 static void
@@ -243,13 +306,26 @@ board_init(void)
 	mpfs_board_emmcsd_init();
 
 	/* Parse partitions */
-	parse_block_partition("/dev/mmcsd0", partition_handler, "/sdcard/");
+	int parts = parse_block_partition("/dev/mmcsd0", partition_handler, "/sdcard/");
+
+	if (parts < 0) {
+		_alert("No eMMC partitions found?!\n");
+		create_partitions();
+		parse_block_partition("/dev/mmcsd0", partition_handler, "/sdcard/");
+	}
 
 	/* Mount the sdcard/eMMC */
 	sdcard_mounted = mount("/dev/mmcsd0p0", "/sdcard/", "vfat", 0, NULL) == 0 ? true : false;
 
 	if (!sdcard_mounted) {
-		_err("SD card mount failed\n");
+		_err("SD card mount failed try to create fat\n");
+		struct fat_format_s fmt = FAT_FORMAT_INITIALIZER;
+		mkfatfs("/dev/mmcsd0p0", &fmt);
+		sdcard_mounted = mount("/dev/mmcsd0p0", "/sdcard/", "vfat", 0, NULL) == 0 ? true : false;
+
+		if (sdcard_mounted) {
+			_alert("Success\n");
+		}
 	}
 
 #endif
@@ -683,7 +759,6 @@ static int loader_main(int argc, char *argv[])
 	ssize_t image_sz = 0;
 
 	loading_status = IN_PROGRESS;
-	_alert("%s %d\n", __func__, __LINE__);
 
 #if defined(CONFIG_MMCSD)
 
