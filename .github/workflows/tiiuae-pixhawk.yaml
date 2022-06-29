@@ -92,14 +92,14 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
-      # - name: Login to GitHub Container Registry
-      #   uses: docker/login-action@v1
-      #   with:
-      #     registry: artifactory.ssrcdevops.tii.ae
-      #     username: ${{ secrets.RT_USER }}
-      #     password: ${{ secrets.RT_APIKEY }}
-      - name: jFrog Login
-        run: docker login -u ${{ secrets.RT_USER }} -p ${{ secrets.RT_APIKEY }} artifactory.ssrcdevops.tii.ae
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: artifactory.ssrcdevops.tii.ae
+          username: ${{ secrets.RT_USER }}
+          password: ${{ secrets.RT_APIKEY }}
+      # - name: jFrog Login
+      #   run: docker login -u ${{ secrets.RT_USER }} -p ${{ secrets.RT_APIKEY }} artifactory.ssrcdevops.tii.ae
       - name: Firmware flasher - Build and push
         uses: docker/build-push-action@v2
         with:
